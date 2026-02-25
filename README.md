@@ -1,12 +1,12 @@
 # Temperature Variation in Patients with Suspected Infection
 
-> Rationale: Body temperature (BT) is a key vital sign in critically ill patients, with established prognostic utility. However, BT is typically evaluated statically, despite being a dynamic parameter that changes throughout hospitalization. While variation in other physiologic measures such as heart rate variability has proven clinically informative, the clinical and biological significance of temperature variation remains unexplored. 
+> **Rationale**: Body temperature (BT) is a key vital sign in critically ill patients, with established prognostic utility. However, BT is typically evaluated statically, despite being a dynamic parameter that changes throughout hospitalization. While variation in other physiologic measures such as heart rate variability has proven clinically informative, the clinical and biological significance of temperature variation remains unexplored. 
 
-> Objective: To determine the clinical and biological significance of temperature variation in critically ill patients with sepsis.  
+> **Objective**: To determine the clinical and biological significance of temperature variation in critically ill patients with sepsis.  
 
-> Methods: Perform a retrospective, observational cohort study of adult ICU patients with suspected infections within 24 hours of hospitalization. Using multivariable logistic regression models to assess the relationship between temperature variability and both 30-day mortality and culture-positive bacteremia. 
+> **Methods**: Perform a retrospective, observational cohort study of adult ICU patients with suspected infections within 24 hours of hospitalization. Using multivariable logistic regression models to assess the relationship between temperature variability and both 30-day mortality and culture-positive bacteremia. 
 
-> Expected results: An association between temperature variability on day 2 of hospitalization (24-48 hours after admission) and both 30-day mortality and culture-positive bacteremia. Expect that these associations will remain robust across various definitions of temperature variability and independent of measurement frequency or absolute temperature values (whether a patient ever mounts a fever). 
+> **Expected results**: An association between temperature variability on day 2 of hospitalization (24-48 hours after admission) and both 30-day mortality and culture-positive bacteremia. Expect that these associations will remain robust across various definitions of temperature variability and independent of measurement frequency or absolute temperature values (whether a patient ever mounts a fever). 
 
 ## Table of Contents
 
