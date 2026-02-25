@@ -16,7 +16,7 @@
 - [Pipeline Details](#pipeline-details)
   - [01_calc_24hr_sofa_max.py — SOFA Score Calculation](#01_calc24hrsofamaxpy--sofa-score-calculation)
   - [02_calc_cci.py - Charlson Comorbidity Index Calculation](#02_calcccipy--charlson-comorbidity-index-calculation)
-  - [03_temp_var_analysis.R - Cohort identification and analysis](#03_tempvaranalysisr--cohort-identification-and-analysis)
+  - [03_temp_var_analysis.Rmd - Cohort identification and analysis](#03_tempvaranalysisrmd--cohort-identification-and-analysis)
 - [Files to Upload](#files-to-upload)
 
 ---
@@ -144,7 +144,7 @@ lat <- 42.2838    (45.4996 for OHSU)
 
 ---
 
-### 03_temp_var_analysis.R - Cohort identification and analysis
+### 03_temp_var_analysis.Rmd - Cohort identification and analysis
 
 **Purpose:** Build the analytic cohort with inclusion/exclusion criteria, derive confounding variables and outcomes of interest, and perform multivariable logistic regression analysis with multiple sensitivity tests
 
