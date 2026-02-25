@@ -1,5 +1,5 @@
 ### specify config.yaml path ###
-config_path = "Z:/Katie/Temperature_CLIF/config.yaml"
+config_path = "Z:/Katie/Temperature_CLIF/Temperature_Variation_Suspected_Sepsis/config.yaml"
 
 import yaml
 
@@ -64,3 +64,4 @@ sofa_24hr = co.compute_sofa_scores(wide_df=within_24hr, id_name='hospitalization
 # export sofa_24hr
 sofa_24hr.to_csv(f"{output_directory}/sofa_24hr.csv", index=False)
 sofa_24hr.to_parquet(f"{output_directory}/sofa_24hr.parquet", index=False)
+
