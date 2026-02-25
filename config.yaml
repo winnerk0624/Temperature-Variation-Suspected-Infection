@@ -1,0 +1,7 @@
+tables_location: "Z:/Temperature_CLIF/Temperature_Variation_Suspected_Sepsis/icu-clif_data_processed" 
+project_location: "Z:/Temperature_CLIF/Temperature_Variation_Suspected_Sepsis"
+file_type: 'parquet'
+timezone: 'US/Eastern'
+site: 'Michigan'
+lon: -83.7296 		# specify longitude (-122.6878 for OHSU)
+lat: 42.2838 		# specify latitude (45.4996 for OHSU)
