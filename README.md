@@ -74,7 +74,7 @@ data.table, tidyverse, lubridate
 arrow, yaml
 
 # Analysis
-suncalc, tableone, broom, margins
+suncalc, comorbidity, tableone, broom, margins
 
 # Visualization
 patchwork
@@ -170,7 +170,7 @@ The secondary outcome is **culture-positive bacteremia** defined as a blood cult
 | File | Description |
 |------|-------------|
 | `project_tables/table1_cat.csv` | Table 1 stratified by quartiles of temperature variation (change in temperature from patient mean) |
-| `project_tables/table1_cat.csv` | Table 1 for all patients in cohort|
+| `project_tables/table1_all.csv` | Table 1 for all patients in cohort|
 | `project_tables/mortality_logit_results.csv` | Results from unadjusted and adjusted logistic regression models with 30-day mortality |
 | `project_tables/mortality_margins.csv` | Results from marginal effects of multivariable logistic regression model with 30-day mortality |
 | `project_tables/sensitivity_hospitalization_day.csv` | Sensitivity analysis with day of hospitalization |
@@ -192,6 +192,12 @@ The secondary outcome is **culture-positive bacteremia** defined as a blood cult
 | `project_figures/sensitivity_measurement_bias.pdf` | Forest plot from sensitivity analysis with routine temperature measurements |
 | `project_figures/sensitivity_hospitalization_day.pdf` | Forest plot from sensitivity analysis with day of hospitalization |
 | `project_figures/sensitivity_fever.pdf` | Forest plot from sensitivity analysis with fever classification |
+
+**Output Figures:**
+
+| File | Description |
+|------|-------------|
+| `consort_numbers.txt` | Text printed to the console for consort diagram | 
 
 ---
 
