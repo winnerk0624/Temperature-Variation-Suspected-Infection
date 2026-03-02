@@ -13,6 +13,7 @@ output: html_document
 packages <- c("tidyverse", # data manipulation, plotting, etc.
               "lubridate", # simplify dates and times
               "suncalc", # calculate sun and moon positions, phases, etc.
+              "comorbidity", # easy comorbidity table based on ICD-10 codes
               "tableone", # descriptive statistics tables
               "patchwork", # combine multiple ggplot2 plots
               "broom", # tidy regression data frames
@@ -287,13 +288,15 @@ sofa_24hr <- read_parquet(paste0(tables_location,"/sofa_24hr.", file_type)) %>%
 Charlson Comorbidity Index is calculated in Stage 2 using the clifpy calculate_cci() command in python
 
 ```{r charlson}
-cci <- read_parquet(paste0(tables_location, "/cci_results.", file_type)) %>%
+cci <- clif_hospital_diagnosis %>%
+  filter(hospitalization_id %in% suspected_infection) %>%
   collect() %>%
-  mutate(diabetes = as.integer(diabetes_uncomplicated == 1 | diabetes_with_complications == 1),
-         cirrhosis = as.integer(mild_liver_disease == 1 | moderate_severe_liver_disease == 1),
-         cancer = as.integer(metastatic_solid_tumor == 1 | cancer == 1),
-         rend = renal_disease) %>%
-  select(hospitalization_id, cci_score, diabetes, cirrhosis, cancer, rend) 
+  comorbidity(id = "hospitalization_id", code = "diagnosis_code", map = "charlson_icd10_quan", assign0 = FALSE) %>%
+  mutate(cci_score = score(., weights = "quan", assign0 = FALSE)) %>%
+  mutate(diabetes = as.integer(diab == 1 | diabwc == 1),
+         cirrhosis = as.integer(mld == 1 | msld == 1),
+         cancer = as.integer(metacanc == 1 | canc == 1)) %>%
+  select(hospitalization_id, diabetes, cirrhosis, cancer, rend, cci_score) 
 ```
 
 ### 3. Culture Positive Pathogen
@@ -681,8 +684,8 @@ tbl_ttl <- CreateTableOne(vars = vars, data = mean_cat_tab, factorVars = catvars
 tbl_ttl <- as.data.frame(print(tbl_ttl, nonormal = T, quote = F, noSpaces = T, printToggle = F))
 
 # write csv
-write_csv(tbl, file.path(project_tables, "table1_cat.csv"))
-write_csv(tbl_ttl, file.path(project_tables, "table1_all.csv"))
+write.csv(tbl, file.path(project_tables, "table1_cat.csv"))
+write.csv(tbl_ttl, file.path(project_tables, "table1_all.csv"))
 ```
 
 ## D. Why Day 2?
@@ -805,7 +808,8 @@ dev.off()
 ```{r mortality}
 temp_event <- variation_unique %>%
   mutate(mean_cat4 = as.integer(mean_cat == 4),
-         admit_temp_cat  = factor(admit_temp_cat, levels = c("normothermic", "hyperthermic", "hypothermic")))
+         admit_temp_cat  = factor(admit_temp_cat, levels = c("normothermic", "hyperthermic", "hypothermic")),
+        decade = as.numeric(age_group))
 
 ## logistic regression of mortality
 # create a list of predictors
@@ -861,24 +865,20 @@ adj_logit_results <- adj_logit_results %>%
 all_results <- bind_rows(logit_results, adj_logit_results) %>%
   select(model, predictor, term, estimate, conf.low, conf.high, p.value)
 
-write_csv(all_results, file.path(project_tables, "mortality_logit_results.csv"))
+write.csv(all_results, file.path(project_tables, "mortality_logit_results.csv"))
 ```
 
 ### 1. Marginal Effects
 
 ```{r margins}
-temp_event <- temp_event %>%
-  mutate(decade = as.numeric(age_group),
-         normothermic = as.integer(admit_temp_cat == "normothermic"))
-
-model_covariate <- glm(die_within_30d ~ delta_mean + sofa_total + cci_score + decade + female + diabetes + rend + cancer + cirrhosis + neutropenia + icu + anti_pyretics + pathogen + normothermic + num_measurements, data = temp_event, family = "binomial")
+model_covariate <- glm(die_within_30d ~ delta_mean + sofa_total + cci_score + decade + female + diabetes + rend + cancer + cirrhosis + neutropenia + icu + anti_pyretics + pathogen + admit_temp_cat + num_measurements, data = temp_event, family = "binomial")
 broom::tidy(model_covariate, conf.int = TRUE, exponentiate = TRUE)
 
 # get marginal effects
 model_margins <- margins(model_covariate)
 tidy_margins <- broom::tidy(model_margins, conf.int = TRUE) %>%
   filter(!str_detect(term, "Intercept"))
-write_csv(tidy_margins, file.path(project_tables, "mortality_margins.csv"))
+write.csv(tidy_margins, file.path(project_tables, "mortality_margins.csv"))
 
 # create variable labels for plotting
 variable_labels <- c(
@@ -945,9 +945,34 @@ abnormal_counts <- variation_cohort %>%
   mutate(total_count = sum(hourly_count),
          # calculate probability that temperature will be measured at a given hour
          probability_measurement = hourly_count / total_count)
-routine_hours <- abnormal_counts %>%
-  slice_max(order_by = probability_measurement, n = 6) %>%
-  pull(hour)
+
+# get routine hours defined as times when probability of  measurement is highest and probability of abnormal temperature is lowest
+# want 6 times spaced 4 hours apart
+# generate 4 hour sets
+candidate_hours <- lapply(0:3, function(start) { 
+  routine_hours <- seq(start, 23, by = 4)
+  set_stats <- abnormal_counts %>%
+    filter(hour %in% routine_hours) %>%
+    summarize(
+      sum_measurement = sum(probability_measurement),
+      sum_abnormal = sum(probability_abnormal)
+    )
+  # evaluate each set
+  tibble(
+    start_hour = start,
+    hours = list(routine_hours),
+    sum_measurement = set_stats$sum_measurement,
+    sum_abnormal = set_stats$sum_abnormal
+  )
+}) %>%
+  bind_rows()
+
+# pick optimal set based on highest measurement probability & lowest abnormal probability
+top_set <- candidate_hours %>%
+  arrange(desc(sum_measurement), sum_abnormal) %>%
+  slice(1)
+
+routine_hours <- unlist(top_set$hours)
 
 # plot
 pdf(file.path(project_figures,"routine_temps.pdf"))
@@ -988,7 +1013,7 @@ routine_hours <- variation_cohort %>%
 
 routine_model <- glm(die_within_30d ~ delta_mean_sensitivity + sofa_total + cci_score + age_group + female + diabetes + rend + cancer + cirrhosis + neutropenia + icu + anti_pyretics + pathogen + admit_temp_cat, data = routine_hours, family = "binomial")
 routine_model_results <- broom::tidy(routine_model, conf.int = TRUE, exponentiate = TRUE)
-write_csv(routine_model_results, "sensitivity_routine_temps.csv")
+write.csv(routine_model_results, "sensitivity_routine_temps.csv")
 
 pdf(file.path(project_figures,"sensitivity_measurement_bias.pdf"))
 png(file.path(project_figures,"sensitivity_measurement_bias.png"))
@@ -1043,7 +1068,7 @@ hospitalization_day <- results %>%
   mutate(day_label = factor(
     paste0("Day ", day_24hr),
     levels = paste0("Day ", 6:1)))
-write_csv(hospitalization_day, file.path(project_tables, "sensitivity_hospitalization_day.csv"))
+write.csv(hospitalization_day, file.path(project_tables, "sensitivity_hospitalization_day.csv"))
 
 # plot
 pdf(file.path(project_figures,"sensitivity_hospitalization_day.pdf"))
@@ -1087,7 +1112,7 @@ no_fever_event <- temp_event %>%
 
 model_covariate <- glm(die_within_30d ~ delta_mean + sofa_total + cci_score + age_group + female + diabetes + rend + cancer + cirrhosis + neutropenia + icu + anti_pyretics + pathogen + admit_temp_cat + num_measurements, data = no_fever_event, family = "binomial")
 sensitivity_fever <- broom::tidy(model_covariate, conf.int = TRUE, exponentiate = TRUE)
-write_csv(sensitivity_fever, file.path(project_tables, "sensitivity_fever.csv"))
+write.csv(sensitivity_fever, file.path(project_tables, "sensitivity_fever.csv"))
 
 # plot
 pdf(file.path(project_figures,"sensitivity_fever.pdf"))
@@ -1161,7 +1186,7 @@ adj_bacter_results <- adj_bacter_results %>%
   mutate(model = "Adjusted")
 all_bacter_results <- bind_rows(bacter_results, adj_bacter_results) %>%
   select(model, predictor, term, estimate, conf.low, conf.high, p.value)
-write_csv(all_bacter_results, file.path(project_tables, "bacteremia_logit_results.csv"))
+write.csv(all_bacter_results, file.path(project_tables, "bacteremia_logit_results.csv"))
 
 bacter_model_covariate <- glm(pathogen ~ delta_mean + age_group + female + diabetes + rend + malignancy + cirrhosis + neutropenia + icu + anti_pyretics + admit_temp_cat + num_measurements, data = temp_event, family = "binomial")
 # get marginal effects
@@ -1169,5 +1194,6 @@ bacter_model_margins <- margins(bacter_model_covariate)
 tidy_bacter_margins <- broom::tidy(bacter_model_margins, conf.int = TRUE) %>%
   filter(!str_detect(term, "Intercept"))
 tidy_bacter_margins
-write_csv(tidy_bacter_margins, file.path(project_tables, "bacteremia_margins.csv"))
+write.csv(tidy_bacter_margins, file.path(project_tables, "bacteremia_margins.csv"))
 ```
+
