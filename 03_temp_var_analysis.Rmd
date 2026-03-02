@@ -81,6 +81,10 @@ if (!dir.exists(paste0(project_location, "/project_figures"))) {
   dir.create(paste0(project_location, "/project_figures"))
 }
 project_figures <- file.path(paste0(project_location, "/project_figures"))
+
+# sink() diverts all standard R outputs to a specified file
+# call sink() with filename
+sink(file.path(project_tables, "consort_numbers.txt"))
 ```
 
 ## C. Required CLIF Tables
@@ -1195,6 +1199,10 @@ tidy_bacter_margins <- broom::tidy(bacter_model_margins, conf.int = TRUE) %>%
   filter(!str_detect(term, "Intercept"))
 tidy_bacter_margins
 write.csv(tidy_bacter_margins, file.path(project_tables, "bacteremia_margins.csv"))
+
+# call sink() to return output to file specified earlier
+sink()
 ```
+
 
 
