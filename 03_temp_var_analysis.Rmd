@@ -1013,10 +1013,10 @@ routine_hours <- variation_cohort %>%
 
 routine_model <- glm(die_within_30d ~ delta_mean_sensitivity + sofa_total + cci_score + age_group + female + diabetes + rend + cancer + cirrhosis + neutropenia + icu + anti_pyretics + pathogen + admit_temp_cat, data = routine_hours, family = "binomial")
 routine_model_results <- broom::tidy(routine_model, conf.int = TRUE, exponentiate = TRUE)
-write.csv(routine_model_results, "sensitivity_routine_temps.csv")
+write.csv(routine_model_results, file.path(project_tables, "sensitivity_routine_temps.csv")
 
-pdf(file.path(project_figures,"sensitivity_measurement_bias.pdf"))
-png(file.path(project_figures,"sensitivity_measurement_bias.png"))
+pdf(file.path(project_figures, "sensitivity_measurement_bias.pdf"))
+png(file.path(project_figures, "sensitivity_measurement_bias.png"))
 broom::tidy(routine_model, conf.int = TRUE, exponentiate = TRUE) %>%
   filter(!str_detect(term, "Intercept")) %>%
   mutate(term_label = variable_labels[as.character(term)]) %>%
@@ -1196,4 +1196,5 @@ tidy_bacter_margins <- broom::tidy(bacter_model_margins, conf.int = TRUE) %>%
 tidy_bacter_margins
 write.csv(tidy_bacter_margins, file.path(project_tables, "bacteremia_margins.csv"))
 ```
+
 
