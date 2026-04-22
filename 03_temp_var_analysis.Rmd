@@ -931,7 +931,7 @@ dev.off()
 ### 1. Marginal Effects
 
 ```{r margins}
-model_covariate <- glm(die_within_30d ~ delta_mean + sofa_total + decade + female + diabetes + rend + cancer + cirrhosis + neutropenia + icu + anti_pyretics + pathogen + admit_temp_cat + num_measurements, data = temp_event, family = "binomial")
+model_covariate <- glm(die_within_30d ~ delta_mean + sofa_total + age_group + female + diabetes + rend + cancer + cirrhosis + neutropenia + icu + anti_pyretics + pathogen + admit_temp_cat + num_measurements, data = temp_event, family = "binomial")
 broom::tidy(model_covariate, conf.int = TRUE, exponentiate = TRUE)
 
 # get marginal effects
