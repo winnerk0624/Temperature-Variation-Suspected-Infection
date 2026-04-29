@@ -26,7 +26,7 @@
 This repository implements a federated analysis pipeline for a multi-site validate study of temperature variation as a predictor of patient outcomes in suspected infection. THe pipeline:
 
 1. **Builds a cohort** of patients with suspected infection from CLIF-formatted EHR data
-2. **Derives SOFA and CCI Scores** from CLIF-formatted EHR data using clifpy commands in Python
+2. **Derives SOFA Scores** from CLIF-formatted EHR data using clifpy command in Python
 3. **Defines clincal outcomes** (30-day mortality and culture-positive bacteremia)
 4. **Exports figures and tables**
 
@@ -114,6 +114,10 @@ lat <- 42.2838    (45.4996 for OHSU)
 
 ## Pipeline Details
 
+### 00_renv_restore.R
+
+**Purpose:** Initialize the R environment
+
 ### 01_calc_24hr_sofa_max.py — SOFA Score Calculation
 
 **Purpose:** Use clifpy to calculate maximum SOFA score within the first 24 hours
@@ -130,21 +134,7 @@ lat <- 42.2838    (45.4996 for OHSU)
 
 ---
 
-### 02_calc_cci.py - Charlson Comorbidity Index Calculation
-
-**Purpose:** Use clifpy to calculate Charlson Comorbidity Index
-
-**Key Operations**
-1. **Set up clifpy** - need to manually enter `data_directory` and `output_directory`
-2. **Load hospital diagnosis data**
-3. **Calculate CCI scores**  with calculate_cci() command in clifpy
-4. **Export CCI scores** to .parquet file for downstream analysis
-
-**Outputs:** `cci_result.parquet` 
-
----
-
-### 03_temp_var_analysis.Rmd - Cohort identification and analysis
+### 02_temp_var_analysis.Rmd - Cohort identification and analysis
 
 **Purpose:** Build the analytic cohort with inclusion/exclusion criteria, derive confounding variables and outcomes of interest, and perform multivariable logistic regression analysis with multiple sensitivity tests
 
@@ -193,7 +183,7 @@ The secondary outcome is **culture-positive bacteremia** defined as a blood cult
 | `project_figures/sensitivity_hospitalization_day.pdf` | Forest plot from sensitivity analysis with day of hospitalization |
 | `project_figures/sensitivity_fever.pdf` | Forest plot from sensitivity analysis with fever classification |
 
-**Output Figures:**
+**Output Text:**
 
 | File | Description |
 |------|-------------|
@@ -203,4 +193,4 @@ The secondary outcome is **culture-positive bacteremia** defined as a blood cult
 
 ## Files to Upload
 
-After successful completion, return the contents of `project_tables` and `project_figures/`. This includes all analysis artifacts, flow diagram data, and summary tables.
+After successful completion, return the contents of `project_tables` and `project_figures`. This includes all analysis artifacts, flow diagram data, and summary tables.
