@@ -10,28 +10,26 @@ output: html_document
 ## A. Load Libraries
 
 ```{r packages, include = FALSE}
-packages <- c("tidyverse", # data manipulation, plotting, etc.
-              "lubridate", # simplify dates and times
-              "suncalc", # calculate sun and moon positions, phases, etc.
-              "comorbidity", # easy comorbidity table based on ICD-10 codes
-              "tableone", # descriptive statistics tables
-              "patchwork", # combine multiple ggplot2 plots
-              "broom", # tidy regression data frames
-              "margins", # calculate marginal effects
-              "here", # reproducible file paths relative to project root
-              "data.table", 
-              "arrow", # read/write Parquet files
-              "rprojroot",
-              "yaml")
+library(tidyverse)
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(readr)
+library(purrr)
+library(ggplot2)
 
-install_if_missing <- function(package) {
-  if (!require(package, character.only = TRUE)) {
-    install.packages(package, dependencies = TRUE)
-    library(package, character.only = TRUE)
-  }
-}
-sapply(packages, install_if_missing)
-rm(packages, install_if_missing)
+library(arrow)
+library(yaml)
+library(rprojroot)
+library(knitr)
+
+library(suncalc)
+library(comorbidity)
+library(tableone)
+library(broom)
+library(margins)
+library(forcats)
+library(scales)
 
 # use dplyr select as default
 select <- dplyr::select
@@ -43,8 +41,8 @@ select <- dplyr::select
 
 ```{r config}
 # set working directory as project root
-project_root <- file.path(find_root(rprojroot::has_dir("Temperature_Variation_Suspected_Sepsis")),
-                          "Temperature_Variation_Suspected_Sepsis")
+project_root <- file.path(find_root(rprojroot::has_dir("Temperature_Variation_Suspected_Infection")),
+                          "Temperature_Variation_Suspected_Infection")
 knitr::opts_knit$set(root.dir = project_root)
 getwd()
 
@@ -87,6 +85,75 @@ project_figures <- file.path(paste0(project_location, "/project_figures"))
 sink(file.path(project_tables, "consort_numbers.txt"))
 ```
 
+### 1. Helper Functions
+
+```{r functions}
+# to keep track of number of encounters/patients for consort diagram
+consort_step <- function(data, site, step,
+                         patient_col = "patient_id",
+                         encounter_col = "hospitalization_id",
+                         print = TRUE) {
+
+  is_arrow <- inherits(data, c("ArrowObject", "Dataset", "ArrowTabular", "Table"))
+
+  if (is.vector(data) && !is.data.frame(data) && !is_arrow) {
+    # vector of encounter IDs
+    out <- tibble(
+      site = site,
+      step = step,
+      n_patients = NA_integer_,
+      n_encounters = dplyr::n_distinct(data)
+    )
+
+  } else if (is_arrow) {
+    # Arrow path: compute distinct counts in Arrow, then collect tiny result
+    cols_present <- names(data)
+
+    n_pat <- if (patient_col %in% cols_present) {
+      data %>%
+        select(all_of(patient_col)) %>%
+        distinct() %>%
+        summarise(n = dplyr::n()) %>%
+        collect() %>%
+        pull(n)
+    } else NA_integer_
+
+    n_enc <- if (encounter_col %in% cols_present) {
+      data %>%
+        select(all_of(encounter_col)) %>%
+        distinct() %>%
+        summarise(n = dplyr::n()) %>%
+        collect() %>%
+        pull(n)
+    } else NA_integer_
+
+    out <- tibble(site = site, step = step, n_patients = n_pat, n_encounters = n_enc)
+
+  } else {
+    # in-memory data.frame/tibble path
+    n_pat <- if (patient_col %in% names(data)) dplyr::n_distinct(data[[patient_col]]) else NA_integer_
+    n_enc <- if (encounter_col %in% names(data)) dplyr::n_distinct(data[[encounter_col]]) else NA_integer_
+
+    out <- tibble(site = site, step = step, n_patients = n_pat, n_encounters = n_enc)
+  }
+
+  if (isTRUE(print)) {
+    cat("\n In", out$site, "CLIF data there are",
+        out$n_patients, "unique patients with",
+        out$n_encounters, "encounters:", out$step, "\n")
+  }
+
+  out
+}
+
+consort_add <- function(consort_tbl, ...) {
+  bind_rows(consort_tbl, consort_step(...))
+}
+
+consort_log <- tibble::tibble()
+```
+
+
 ## C. Required CLIF Tables
 
 ```{r required_tables}
@@ -110,7 +177,7 @@ clif_table_filenames <- list.files(path = tables_location,
 
 # extract the base names of the files (without extension)
 clif_table_basenames <- basename(clif_table_filenames) |>
-  str_remove(paste0("\\.", file_type, "$"))
+  stringr::str_remove(paste0("\\.", file_type, "$"))
 
 # create a lookup table for required files based on table_flags
 required_files <- paste0("clif_", names(table_flags) [table_flags])
@@ -143,7 +210,7 @@ cast_large_utf8_to_utf8 <- function(x) {
 
 # read the required files into a list of data frames
 if (file_type == "parquet") {
-  data_list <- lapply(required_filenames, open_dataset)
+  data_list <- lapply(required_filenames, arrow::open_dataset)
 } else if (file_type == "csv") {
   data_list <- lapply(required_filenames, read_csv)
 } else if (file_type == "fst") {
@@ -155,7 +222,7 @@ if (file_type == "parquet") {
 # assign the data frames to variables based on their file names
 for (i in seq_along(required_filenames)) {
   # extract the base name of the file (without extension)
-  object_name <- str_remove(basename(required_filenames[i]), paste0("\\.", file_type, "$"))
+  object_name <- stringr::str_remove(basename(required_filenames[i]), paste0("\\.", file_type, "$"))
   # make the object name valid for R (replace invalid characters with underscores)
   object_name <- make.names(object_name)
   # assign the tibble to a variable with the name of the file
@@ -170,7 +237,7 @@ Identify hospitalizations for adults >= 18 who were ever in an ED, Ward or ICU
 # keep ward, ICU, and ER encounters (in case of ED to ICU within one system)
 inpatient_hospitalization_ids <- clif_adt %>%
   filter(tolower(location_category) %in% c("ward", "icu", "ed", "stepdown")) %>%
-  select(hospitalization_id) %>%
+  distinct(hospitalization_id) %>%
   collect()
 
 clif_hospitalization <- clif_hospitalization %>%
@@ -179,15 +246,15 @@ clif_hospitalization <- clif_hospitalization %>%
     # only keep hospitalizations with locations of interest
     hospitalization_id %in% inpatient_hospitalization_ids$hospitalization_id,
     # only keep adults (no pediatric patients)
-    age_at_admission >= 18) %>%
+    age_at_admission >= 18 & age_at_admission <= 89) %>%
   as_arrow_table() # put back to arrow table
 rm(inpatient_hospitalization_ids)
 
 # keep track for consort diagram
-patients <- length(unique(clif_hospitalization$patient_id))
-encounters <- length(clif_hospitalization$hospitalization_id)
-cat('\n In', site, 'CLIF data there are', patients, 'unique patients with', encounters, 'encounters \n')
+consort_log <- consort_add(consort_log, clif_hospitalization, site,
+                           step = "After adult (>=18) + ED/Ward/ICU/Stepdown location filters")
 
+# get study dates
 study_start <- min(clif_hospitalization$admission_dttm)
 study_end <- max(clif_hospitalization$admission_dttm)
 print(paste("The study period starts on", study_start, "and ends on", study_end))
@@ -216,16 +283,15 @@ blood_cultures <- clif_microbiology_culture %>%
               select(patient_id, hospitalization_id, admission_dttm) %>%
               collect(),
             by = "hospitalization_id") %>%
-  mutate(blood_culture_collect_time = as.POSIXct(blood_culture_collect_time),
-         admission_dttm = as.POSIXct(admission_dttm),
+  mutate(blood_culture_collect_time = as.POSIXct(blood_culture_collect_time, tz = "UTC"),
+         admission_dttm = as.POSIXct(admission_dttm, tz = "UTC"),
          culture_within_24hr = (blood_culture_collect_time - admission_dttm) <= as.difftime(24, units = "hours")) %>%
   filter(culture_within_24hr) %>%
   select(patient_id, hospitalization_id, blood_culture_collect_time, admission_dttm)
 
 # keep track for consort diagram
-patients <- length(unique(blood_cultures$patient_id))
-encounters <- length(unique(blood_cultures$hospitalization_id))
-cat('\n In', site, 'CLIF data there are', patients, 'unique patients with', encounters, 'encounters with blood cultures collected \n')
+consort_log <- consort_add(consort_log, blood_cultures, site,
+                           step = "Blood cultures collected within 24h of admission")
 ```
 
 ### 2. Qualifying Antibiotics Started
@@ -242,16 +308,15 @@ qualifying_abx <- clif_medication_admin_intermittent %>%
               select(patient_id, hospitalization_id, admission_dttm) %>%
               collect(),
             by = "hospitalization_id") %>%
-  mutate(abx_dttm = as.POSIXct(abx_dttm),
-         admission_dttm = as.POSIXct(admission_dttm),
+  mutate(abx_dttm = as.POSIXct(abx_dttm, tz = "UTC"),
+         admission_dttm = as.POSIXct(admission_dttm, tz = "UTC"),
          abx_within_24hr = (abx_dttm - admission_dttm) <= as.difftime(24, units = "hours")) %>%
   filter(abx_within_24hr) %>%
   select(patient_id, hospitalization_id, abx_dttm, admission_dttm)
 
 # keep track for consort diagram
-patients <- length(unique(qualifying_abx$patient_id))
-encounters <- length(unique(qualifying_abx$hospitalization_id))
-cat('\n In', site, 'CLIF data there are', patients, 'unique patients with', encounters, 'encounters with qualifying antibiotics initiated \n')
+consort_log <- consort_add(consort_log, qualifying_abx, site,
+                           step = "Qualifying antibiotics initiated within 24h of admission")
 ```
 
 ### 3. Final Suspected Infection 
@@ -264,9 +329,8 @@ suspected_infection_table <- blood_cultures %>%
   distinct(hospitalization_id, .keep_all = T)
 
 # keep track for consort diagram
-patients <- length(unique(suspected_infection_table$patient_id))
-encounters <- length(unique(suspected_infection_table$hospitalization_id))
-cat('\n In', site, 'CLIF data there are', patients, 'unique patients with', encounters, 'encounters with suspected infection \n')
+consort_log <- consort_add(consort_log, suspected_infection_table, site,
+                           step = "Suspected infection (culture + qualifying antibiotics)")
 
 # unique encounters with suspected infection
 suspected_infection <- suspected_infection_table %>%
@@ -308,11 +372,12 @@ cci <- clif_hospital_diagnosis %>%
 ```{r pathogen}
 cultures <- clif_microbiology_culture %>%
   filter(hospitalization_id %in% suspected_infection) %>%
+  select(hospitalization_id, organism_name) %>%
   collect() %>%
   mutate(organism_category = case_when(organism_name == "Pseudomonas aeruginosa ( pseaer )" | organism_name == "Pseudomonas aeruginosa (mucoid variety) ( psam )" ~ "pseudomonas_aeruginosa",
                                        organism_name == "Staphylococcus epidermidis (Coag. Negative Staphylococcus) ( staepi )" | organism_name == "coagulase negative staphylococcus ( staneg )" ~ "coag_negative_staphylococcus", 
                                        organism_name == "Staphylococcus aureus ( staaur )" ~ "staphylococcus_aureus", 
-                                       organism_name == "Escherichia coli ( esccol )" ~ "eschericha_coli", 
+                                       organism_name == "Escherichia coli ( esccol )" ~ "escherichia_coli", 
                                        organism_name == "Enterococcus faecalis ( strfae )" | organism_name == "Enterococcus faecium ( strfac )" ~ "enterococcus",
                                        organism_name == "Klebsiella pneumoniae ( klpnsp )" | organism_name == "Klebsiella pneumoniae ( klepne )" ~ "klebsiella_pneumoniae"))
 cultures <- cultures %>%
@@ -332,29 +397,28 @@ pathogens <- cultures %>%
 
 ```{r icu}
 icu <- clif_adt %>%
-  select(hospitalization_id, location_name, location_category) %>%
+  select(hospitalization_id, location_category) %>%
   filter(hospitalization_id %in% suspected_infection,
          location_category == "icu") %>%
-  distinct(hospitalization_id, .keep_all = T) %>%
-  collect() %>%
-  select(-location_category) %>%
-  rename(icu = "location_name")
+  distinct(hospitalization_id) %>%
+  pull(hospitalization_id)
 ```
 
 ### 5. Neutropenia
 
 ```{r neutropenia}
 neutropenia <- clif_labs %>%
-  select(hospitalization_id:lab_result_dttm, lab_category:reference_unit, lab_speciman_category) %>%
+  select(hospitalization_id:lab_result_dttm, lab_category:reference_unit) %>%
   filter(lab_category == "neutrophils_absolute",
          hospitalization_id %in% suspected_infection) %>%
+  select(hospitalization_id, lab_collect_dttm, lab_value_numeric) %>%
   collect() %>%
   left_join(clif_hospitalization %>%
               select(hospitalization_id, admission_dttm) %>%
               collect(),
             by = "hospitalization_id") %>%
-  mutate(lab_collect_dttm = as.POSIXct(lab_collect_dttm),
-         admission_dttm = as.POSIXct(admission_dttm),
+  mutate(lab_collect_dttm = as.POSIXct(lab_collect_dttm, tz = "UTC"),
+         admission_dttm = as.POSIXct(admission_dttm, tz = "UTC"),
          # time from admission to lab collection
          time_to_admit = abs(as.numeric(difftime(lab_collect_dttm, admission_dttm, units = "hours")))) %>% 
   # get first lab (collected closest to admission_dttm)
@@ -372,16 +436,16 @@ neutropenia <- clif_labs %>%
 ### 6. Anti-pyretic Medications
 
 ```{r anti-pyretics}
-anti_pyretic_meds <- tolower(c("Acetminophen","Ibuprofen","Ketorolac","Aspirin","Indomethacin","Prednisone","Methylprednisolone","Prednisolone","Infliximab","Adalimumab","Etanercept","Anakinra","Tocilizumab","Interferon alpha","Interferon beta","Rituximab","Interleukin-2"))
+anti_pyretic_meds <- tolower(c("Acetaminophen", "Acetminophen","Ibuprofen","Ketorolac","Aspirin","Indomethacin","Prednisone","Methylprednisolone","Prednisolone","Infliximab","Adalimumab","Etanercept","Anakinra","Tocilizumab","Interferon alpha","Interferon beta","Rituximab","Interleukin-2"))
 
 # define anti-pyretic medications
 # need to load appropriate mediation tables
 anti_pyretics <- clif_medication_admin_intermittent %>%
   select(hospitalization_id, admin_dttm, med_category, med_group) %>%
-  filter(med_category %in% anti_pyretic_meds,
+  filter(tolower(med_category) %in% anti_pyretic_meds,
          hospitalization_id %in% suspected_infection) %>%
   collect() %>%
-  full_join(clif_medication_admin_continuous %>%
+  bind_rows(clif_medication_admin_continuous %>%
               select(hospitalization_id, admin_dttm, med_category, med_group) %>%
               filter(med_group == "vasoactives", 
                      hospitalization_id %in% suspected_infection) %>%
@@ -391,12 +455,13 @@ anti_pyretics <- clif_medication_admin_intermittent %>%
               filter(hospitalization_id %in% suspected_infection) %>%
               collect(),
             by = "hospitalization_id") %>%
-  mutate(admin_dttm = as.POSIXct(admin_dttm),
-         admission_dttm = as.POSIXct(admission_dttm),
+  mutate(admin_dttm = as.POSIXct(admin_dttm, tz = "UTC"),
+         admission_dttm = as.POSIXct(admission_dttm, tz = "UTC"),
          # get time from admit to medication admin
          time_to_admit = abs(as.numeric(difftime(admin_dttm, admission_dttm, units = "hours")))) %>%
   # only keep medications administered within first 48 hours
   filter(time_to_admit < 48) %>%
+  distinct(hospitalization_id) %>%
   pull(hospitalization_id)
 ```
 
@@ -405,11 +470,11 @@ anti_pyretics <- clif_medication_admin_intermittent %>%
 ```{r temps}
 # get temperature measurements 
 temperature_celsius <- clif_vitals %>%
-  select(hospitalization_id:vital_name, vital_value) %>%
   filter(hospitalization_id %in% suspected_infection,
          vital_name == "temp_c",
          # only keep values within normal physiologic range
          vital_value > 32 & vital_value < 44) %>%
+  select(patient_id, hospitalization_id, recorded_dttm, vital_value) %>%
   collect() %>%
   mutate(vital_dttm = as.POSIXct(str_replace(recorded_dttm, "\\..*$", ""), 
                                      format = "%Y-%m-%d %H:%M:%S", tz = "UTC")) %>%
@@ -422,7 +487,7 @@ first_temps <- temperature_celsius %>%
               filter(hospitalization_id %in% suspected_infection) %>%
               collect(),
             by = "hospitalization_id") %>%
-  mutate(admission_dttm = as.POSIXct(admission_dttm),
+  mutate(admission_dttm = as.POSIXct(admission_dttm, tz = "UTC"),
          time_to_admit = abs(as.numeric(difftime(vital_dttm, admission_dttm, units = "hours")))) %>%
   # get first temperature (recorded closest to admission_dttm)
   group_by(hospitalization_id) %>%
@@ -463,15 +528,15 @@ days_2 <- clif_hospitalization %>%
   select(hospitalization_id, admission_dttm, discharge_dttm) %>%
   filter(hospitalization_id %in% suspected_infection) %>%
   collect() %>%
-  mutate(admission_dttm = as.POSIXct(admission_dttm),
-         discharge_dttm = as.POSIXct(discharge_dttm),
+  mutate(admission_dttm = as.POSIXct(admission_dttm, tz = "UTC"),
+         discharge_dttm = as.POSIXct(discharge_dttm, tz = "UTC"),
          time_to_discharge = difftime(discharge_dttm, admission_dttm, unit = "hours")) %>%
   filter(time_to_discharge >= 48) %>%
   pull(hospitalization_id)
 
 # keep track for consort diagram
-encounters <- length(unique(days_2))
-cat('\n In', site, 'CLIF data there are', encounters, 'encounters hospitalized for 48+ hours \n')
+consort_log <- consort_add(consort_log, days_2, site,
+                           step = "Hospitalized for >= 48 hours")
 ```
 
 #### b. 2+ Temperature Measurements 
@@ -486,8 +551,9 @@ two_temps <- all_temps_cohort %>%
   filter(num_measurements > 1) %>%
   pull(hospitalization_id)
 
-encounters <- length(unique(two_temps))
-cat('\n In', site, 'CLIF data there are', encounters, 'encounters with at least 2 temperature mesurements on day 2 of hospitalization \n')
+# keep track for consort diagram
+consort_log <- consort_add(consort_log, two_temps, site,
+                           step = "At least 2 temperature measurements on day 2 (24–48h)")
 ```
 
 ### 2. Final Cohort
@@ -511,32 +577,34 @@ final_cohort <- all_temps_cohort %>%
   left_join(cci, by = "hospitalization_id") %>%
   # get culture positive pathogens
   left_join(pathogens, by = "hospitalization_id") %>%
-  # get location
-  left_join(icu, by = "hospitalization_id") %>%
   # define confounding variables
   mutate(
     # admission temperature category
     admit_temp_cat = factor(case_when(admit_temp < 36.0 ~ "hypothermic",
                                       admit_temp >= 38.3 ~ "hyperthermic",
                                       TRUE ~ "normothermic")),
+    # icu admission
+    icu = as.integer(hospitalization_id %in% icu),
     neutropenia = as.integer(hospitalization_id %in% neutropenia),
     anti_pyretics = as.integer(hospitalization_id %in% anti_pyretics),
     # age categorized by decade
     age_group = cut(age_at_admission, breaks = c(18, 29, 39, 49, 59, 69, 79, Inf),
                          labels = c("18-29", "30-39", "40-49", "50-59", "60-69", "70-79", "80+"), right = F),
+    decade = round((age_at_admission - 18) / 10), 1,
     female = as.integer(sex_name == "Female"),
-    pathogen = as.integer(pseudomonas_aeruginosa == 1 | staphylococcus_aureus == 1 | eschericha_coli == 1 | klebsiella_pneumoniae == 1 | enterococcus == 1),
+    pathogen = as.integer(pseudomonas_aeruginosa == 1 | staphylococcus_aureus == 1 | escherichia_coli == 1 | klebsiella_pneumoniae == 1 | enterococcus == 1),
     # if culture is not positive for one of the defined pathogens above = 0
     pathogen = ifelse(is.na(pathogen) | pathogen == 0, 0, 1),
-    across(pseudomonas_aeruginosa:eschericha_coli, ~ ifelse(is.na(.x) | .x == 0, 0L, 1L)),
+    across(pseudomonas_aeruginosa:escherichia_coli, ~ ifelse(is.na(.x) | .x == 0, 0L, 1L)),
     # get time from admission to death for 30-day mortality
-    death_dttm = as.POSIXct(death_dttm),
+    admission_dttm = as.POSIXct(admission_dttm, tz = "UTC"),
+    death_dttm = as.POSIXct(death_dttm, tz = "UTC"),
     time_to_death = as.numeric(difftime(death_dttm, admission_dttm, units = "days")),
     time_to_death = ifelse(is.na(time_to_death), 31, time_to_death),
     die_within_30d = as.integer(time_to_death <= 30))
 ```
 
-### 3. Temperature Variation
+### 3. Temperature Variability
 
 #### a. Diurnal Maximum
 
@@ -544,9 +612,14 @@ final_cohort <- all_temps_cohort %>%
 final_cohort <- final_cohort %>%
   left_join(
     # extracts unique dates then returns sunrise and sunset times for each date
-    getSunlightTimes(date = unique(.$date), lat = lat, lon = lon, keep = c("sunrise", "sunset")) %>%
-              select(date, sunrise, sunset),
-            by = "date") %>%
+    getSunlightTimes(
+      date = unique(.$date), 
+      lat = lat, 
+      lon = lon, 
+      keep = c("sunrise", "sunset"),
+      tz = "UTC") %>%
+      select(date, sunrise, sunset),
+    by = "date") %>%
   mutate(
     # determine day or night based on sunrise and sunset times by date
     day_night = if_else(vital_dttm >= sunrise & vital_dttm < sunset, "day", "night")) 
@@ -569,7 +642,8 @@ temp_wide <- final_cohort %>%
       abs(max_temp_day - max_temp_night),
       abs(min_temp_day - min_temp_night),
       abs(min_temp_day - max_temp_night),
-      na.rm = T))
+      na.rm = T)) %>%
+  filter(!is.na(max_difference))
 ```
 
 #### b. Fever
@@ -647,9 +721,9 @@ variation_unique <- variation_unique %>%
 mean_delta <- mean(variation_unique$delta_mean, na.rm = T)
 min_delta <- min(variation_unique$delta_mean, na.rm = T)
 max_delta <- max(variation_unique$delta_mean, na.rm = T)
-pdf(file.path(project_figures,"histogram.pdf"), height = 8, width = 8)
+
 # histogram
-variation_unique %>%
+histogram <- variation_unique %>%
   ggplot(aes(x = delta_mean, fill = mean_cat)) +
   geom_histogram(binwidth = 0.01) +
   labs(x = "Temperature Variability\n(maximum change from patient mean)", y = "Number of Patients", fill = "Quartile") +
@@ -668,32 +742,35 @@ variation_unique %>%
   scale_x_continuous(breaks = seq(0, 3.0, by = 0.25), expand = c(0,0)) +
   scale_y_continuous(expand = c(0,0)) +
   scale_fill_manual(values = c("1" = "#004D40", "2" = "#FFC107", "3" = "#1E88E5", "4" = "#D81B60"))
-dev.off()
+ggsave(file.path(project_figures, "histogram.pdf"),
+       plot = histogram, width = 8, height = 8, units = "in", device = "pdf")
 
 print(paste("The mean temperature variability across the cohort was", mean_delta,"\u00B0C, the minimum temperature variability was", min_delta,"\u00B0C, and the maximum temperature variability was", max_delta,"\u00B0C"))
 ```
 
 ### 4. Table 1
-Descriptive statistics by temperature variation quartile
+Descriptive statistics by temperature variability quartile
 
 ```{r table 1}
 # factorize variables
 mean_cat_tab <- variation_unique %>%
-  mutate(across(c(die_within_30d, female, diabetes, cirrhosis, cancer, rend, pathogen, neutropenia, mean_cat, admit_temp_cat, day1_fever, day2_fever, pathogen, pseudomonas_aeruginosa, enterococcus, staphylococcus_aureus, klebsiella_pneumoniae, eschericha_coli),
+  mutate(across(c(die_within_30d, female, diabetes, cirrhosis, cancer, rend, pathogen, neutropenia, mean_cat, admit_temp_cat, day1_fever, day2_fever, pathogen, pseudomonas_aeruginosa, enterococcus, staphylococcus_aureus, klebsiella_pneumoniae, escherichia_coli),
                 as.factor))
 # variables to include
-vars <- c("delta_mean", "female", "age_at_admission", "sofa_total", "cci_score", "diabetes", "rend", "cirrhosis", "cancer", "neutropenia", "admit_temp_cat", "day1_fever", "day2_fever", "pathogen", "die_within_30d", "pseudomonas_aeruginosa", "enterococcus", "staphylococcus_aureus", "klebsiella_pneumoniae", "eschericha_coli")
-catvars <- c("female", "diabetes", "rend", "cirrhosis", "cancer", "die_within_30d", "neutropenia", "admit_temp_cat", "pathogen", "day1_fever", "day2_fever", "pseudomonas_aeruginosa", "enterococcus", "staphylococcus_aureus", "klebsiella_pneumoniae", "eschericha_coli")
+vars <- c("delta_mean", "female", "age_at_admission", "sofa_total", "cci_score", "diabetes", "rend", "cirrhosis", "cancer", "neutropenia", "admit_temp_cat", "day1_fever", "day2_fever", "pathogen", "die_within_30d", "pseudomonas_aeruginosa", "enterococcus", "staphylococcus_aureus", "klebsiella_pneumoniae", "escherichia_coli")
+catvars <- c("female", "diabetes", "rend", "cirrhosis", "cancer", "die_within_30d", "neutropenia", "admit_temp_cat", "pathogen", "day1_fever", "day2_fever", "pseudomonas_aeruginosa", "enterococcus", "staphylococcus_aureus", "klebsiella_pneumoniae", "escherichia_coli")
 contvars <- setdiff(vars, catvars)
 
 # table stratified by mean_cat
 tbl <- CreateTableOne(vars = vars, data = mean_cat_tab, strata = "mean_cat", factorVars = catvars)
 tbl <- print(tbl, nonormal = NULL, pval = T, quote = F, noSpaces = T, pDigits = 3, printToggle = F)
 tbl_df <- as.data.frame(tbl)
+tbl_df <- tibble::rownames_to_column(tbl_df, var = "variable")
 # full cohort table
 tbl_ttl <- CreateTableOne(vars = vars, data = mean_cat_tab, factorVars = catvars)
 tbl_ttl <- print(tbl_ttl, nonormal = NULL, quote = F, noSpaces = T, printToggle = F)
 tbl_ttl_df <- as.data.frame(tbl_ttl)
+tbl_ttl_df <- tibble::rownames_to_column(tbl_ttl_df, var = "variable")
 
 # get rows that correspond to continuous variables for formatting
 cont_rows <- Reduce('|', lapply(contvars, function(v) startsWith(rownames(tbl_df), v)))
@@ -709,8 +786,8 @@ tbl_ttl_df[cont_rows, ] <- lapply(tbl_ttl_df[cont_rows, ], function(x) {
 })
 
 # write csv
-write.csv(tbl_df, file.path(project_tables, "table1_cat.csv"))
-write.csv(tbl_ttl_df, file.path(project_tables, "table1_all.csv"))
+readr::write_csv(tbl_df, file.path(project_tables, "table1_cat.csv"))
+readr::write_csv(tbl_ttl_df, file.path(project_tables, "table1_all.csv"))
 ```
 
 ## D. Why Day 2?
@@ -730,8 +807,7 @@ summary_by_hour <- variation_cohort %>%
   mutate(day_label = factor(paste0("Day ", day_24hr)))
 
 # plot
-pdf(file.path(project_figures,"avg_temp_day.pdf"), height = 8, width = 11)
-ggplot(summary_by_hour, aes(hour, mean_temp, color = factor(day_24hr))) +
+avg_temp_day <- ggplot(summary_by_hour, aes(hour, mean_temp, color = factor(day_24hr))) +
   geom_line(linewidth = 1.1) +
   scale_x_continuous(breaks = seq(0, 24, by = 4),
                      labels = c("0:00", "4:00", "8:00", "12:00", "16:00", "20:00", "0:00"),
@@ -741,7 +817,7 @@ ggplot(summary_by_hour, aes(hour, mean_temp, color = factor(day_24hr))) +
        x = "Hour of Day",
        color = "Day") +
   scale_color_manual(values = c("#648FFF", "#785EF0", "#DC267F", "#FE6100", "#FFB000", "#80EC9F")) +
-  coord_cartesian(ylim = c(36.8,37.1)) +
+  coord_cartesian(ylim = c(36.8,37.2)) +
   theme_minimal() +
   theme(panel.grid.major = element_blank(),
         panel.grid.minor = element_blank(),
@@ -750,7 +826,8 @@ ggplot(summary_by_hour, aes(hour, mean_temp, color = factor(day_24hr))) +
         axis.text.y = element_text(size = 10),
         axis.title.y = element_text(size = 12),
         axis.title.x = element_text(size = 12))
-dev.off()
+ggsave(file.path(project_figures, "avg_temp_day.pdf"),
+       plot = avg_temp_day, width = 11, height = 8, units = "in", device = "pdf")
 ```
 
 ### 2. Temperature trajectory
@@ -775,8 +852,7 @@ hourly_average_segs <- hourly_average %>%
 # panel 1: line plot of mean hourly temperature
 labels <- rep(c("0:00", "12:00"), 6)
 labels <- c(labels, "0:00")
-pdf(file.path(project_figures,"temp_trajectory.pdf"), height = 8, width = 11)
-ggplot(hourly_average_segs) +
+temp_trajectory <- ggplot(hourly_average_segs) +
   geom_segment(aes(
     x = continuous_time, y = avg_temp,
     xend = next_x, yend = next_y, # create continuous line
@@ -786,7 +862,7 @@ ggplot(hourly_average_segs) +
     breaks = seq(0, 144, by = 12),
     labels = labels,
     expand = c(0,0)) +
-  coord_cartesian(ylim = c(36.8, 37.1)) +
+  coord_cartesian(ylim = c(36.7, 37.2)) +
   scale_color_manual(values = c("#648FFF", "#785EF0", "#DC267F", "#FE6100", "#FFB000", "#80EC9F"),
                      name = "Day") +
   labs(y = "Mean Hourly Temperature",
@@ -798,7 +874,8 @@ ggplot(hourly_average_segs) +
         axis.text.y = element_text(size = 10),
         axis.title.y = element_text(size = 12),
         axis.title.x = element_text(size = 12))
-dev.off()
+ggsave(file.path(project_figures, "temp_trajectory.pdf"),
+       plot = temp_trajectory, width = 11, height = 8, units = "in", device = "pdf")
 
 temperature_variation <- variation_cohort %>%
   filter(day_24hr %in% c(1:6)) %>%
@@ -807,8 +884,7 @@ temperature_variation <- variation_cohort %>%
   ungroup()
 
 # panel 2: temperature variation boxplots
-pdf(file.path(project_figures,"temp_variability.pdf"), height = 8, width = 11)
-ggplot(temperature_variation, aes(x = factor(day_24hr), y = delta_mean, fill = factor(day_24hr), alpha = 0.08)) +
+temp_variability <- ggplot(temperature_variation, aes(x = factor(day_24hr), y = delta_mean, fill = factor(day_24hr), alpha = 0.08)) +
   geom_boxplot(outlier.shape = NA, coef = 0) +
   scale_fill_manual(values = c("#648FFF", "#785EF0", "#DC267F", "#FE6100", "#FFB000", "#80EC9F")) +
   labs(y = "Temperature Variability",
@@ -823,7 +899,8 @@ ggplot(temperature_variation, aes(x = factor(day_24hr), y = delta_mean, fill = f
         axis.text.y = element_text(size = 10),
         axis.title.y = element_text(size = 12),
         axis.title.x = element_text(size = 12))
-dev.off()
+ggsave(file.path(project_figures, "temp_variability.pdf"),
+       plot = temp_variability, width = 11, height = 8, units = "in", device = "pdf")
 ```
 
 # IV. Outcomes
@@ -833,8 +910,7 @@ dev.off()
 ```{r mortality}
 temp_event <- variation_unique %>%
   mutate(mean_cat4 = as.integer(mean_cat == 4),
-         admit_temp_cat  = factor(admit_temp_cat, levels = c("normothermic", "hyperthermic", "hypothermic")),
-         age_group = as.numeric(age_group))
+         admit_temp_cat  = factor(admit_temp_cat, levels = c("normothermic", "hyperthermic", "hypothermic")))
 
 ## logistic regression of mortality
 # create a list of predictors
@@ -848,7 +924,7 @@ predictors <- list(
   "day1_fever" = "day1_fever",
   "day2_fever" = "day2_fever")
 # create a list of covariates
-adj_covars <- c("sofa_total", "age_group", "female", "diabetes", "rend", "cancer", "cirrhosis", "neutropenia", "pathogen", "icu", "anti_pyretics", "num_measurements", "admit_temp_cat")
+adj_covars <- c("sofa_total", "decade", "female", "diabetes", "rend", "cancer", "cirrhosis", "neutropenia", "pathogen", "icu", "anti_pyretics", "num_measurements", "admit_temp_cat")
 
 ## unadjusted analysis
 # function to fit and tidy logistic regression
@@ -890,7 +966,7 @@ adj_logit_results <- adj_logit_results %>%
 all_results <- bind_rows(logit_results, adj_logit_results) %>%
   select(model, predictor, term, estimate, conf.low, conf.high, p.value)
 
-write.csv(all_results, file.path(project_tables, "mortality_logit_results.csv"))
+readr::write_csv(all_results, file.path(project_tables, "mortality_logit_results.csv"))
 ```
 
 ```{r mortality_forest_plot}
@@ -901,8 +977,7 @@ logit_labels <- c('delta_mean' = 'Delta Temperature',
                   'day1_fever' = 'Day 1 Fever',
                   'day2_fever' = 'Day 2 Fever')
 
-pdf(file.path(project_figures,"mortality_logit_results.pdf"), height = 8, width = 8)
-adj_logit_results %>%
+mortality_logit_regults <- adj_logit_results %>%
   mutate(term_label = logit_labels[as.character(term)]) %>%
   filter(!is.na(term_label)) %>%
   mutate(term_label = forcats::fct_reorder(term_label, estimate)) %>%
@@ -925,20 +1000,21 @@ adj_logit_results %>%
     axis.title.y = element_text(color = "black", size = 16),
     axis.text.x = element_text(color = "black", size = 12),
     axis.text.y = element_text(color = "black", size = 12))
-dev.off()
+ggsave(file.path(project_figures, "mortality_logit_regults.pdf"),
+       plot = mortality_logit_regults, width = 8, height = 8, units = "in", device = "pdf")
 ```
 
 ### 1. Marginal Effects
 
 ```{r margins}
-model_covariate <- glm(die_within_30d ~ delta_mean + sofa_total + age_group + female + diabetes + rend + cancer + cirrhosis + neutropenia + icu + anti_pyretics + pathogen + admit_temp_cat + num_measurements, data = temp_event, family = "binomial")
+model_covariate <- glm(die_within_30d ~ delta_mean + sofa_total + decade + female + diabetes + rend + cancer + cirrhosis + neutropenia + icu + anti_pyretics + pathogen + admit_temp_cat + num_measurements, data = temp_event, family = "binomial")
 broom::tidy(model_covariate, conf.int = TRUE, exponentiate = TRUE)
 
 # get marginal effects
 model_margins <- margins(model_covariate)
 tidy_margins <- broom::tidy(model_margins, conf.int = TRUE) %>%
   filter(!str_detect(term, "Intercept"))
-write.csv(tidy_margins, file.path(project_tables, "mortality_margins.csv"))
+readr::write_csv(tidy_margins, file.path(project_tables, "mortality_margins.csv"))
 
 # create variable labels for plotting
 variable_labels <- c(
@@ -958,9 +1034,9 @@ variable_labels <- c(
   'female' = 'Female sex',
   'neutropenia' = 'Neutropenia',
   'num_measurements' = '# Temperature measurements',
-  'icu' = 'Admission ICU',
+  'icu' = 'ICU Admission',
   'diabetes' = 'Diabetes',
-  'pathogen' = 'Culture positive bacteremia',
+  'pathogen' = 'Bacteremia',
   'anti_pyretics' = 'Anti-pyretics')
 # # plot marginal effects
 # plot_margins <- tidy_margins %>%
@@ -1031,10 +1107,12 @@ top_set <- candidate_hours %>%
 
 routine_hours <- unlist(top_set$hours)
 
+consort_log <- consort_add(consort_log, routine_hours, site,
+                           step = "Temperatures measured at routine hours")
+
 # plot
-pdf(file.path(project_figures,"routine_temps.pdf"), height = 8, width = 11)
 # Base plot: Bar plot for number of temperature measurements
-ggplot(abnormal_counts, aes(x = hour)) +
+routine_temps <- ggplot(abnormal_counts, aes(x = hour)) +
   # Bar plot layer
   geom_bar(aes(y = probability_measurement), stat = "identity", fill = "#1E88E5", alpha = 0.3) +
   # Line plot layer for probability of abnormal temperature
@@ -1054,7 +1132,8 @@ ggplot(abnormal_counts, aes(x = hour)) +
         panel.grid.minor = element_blank(),
         axis.line = element_line(color = "black"),
         legend.position = "none")
-dev.off()
+ggsave(file.path(project_figures, "routine_temps.pdf"),
+       plot = routine_temps, width = 11, height = 8, units = "in", device = "pdf")
 
 # routine hours = 0, 4, 8, 12, 16, 20
 # restrict cohort for routine hours of measurement
@@ -1064,15 +1143,13 @@ routine_hours <- variation_cohort %>%
   mutate(delta_mean_sensitivity = max(abs(temp - mean(temp)))) %>%
   slice_max(delta_mean_sensitivity, n = 1, with_ties = FALSE) %>%
   ungroup() %>%
-  mutate(admit_temp_cat  = factor(admit_temp_cat, levels = c("normothermic", "hyperthermic", "hypothermic")),
-         age_group = as.numeric(age_group))
+  mutate(admit_temp_cat  = factor(admit_temp_cat, levels = c("normothermic", "hyperthermic", "hypothermic")))
 
-routine_model <- glm(die_within_30d ~ delta_mean_sensitivity + sofa_total + age_group + female + diabetes + rend + cancer + cirrhosis + neutropenia + icu + anti_pyretics + pathogen + admit_temp_cat, data = routine_hours, family = "binomial")
+routine_model <- glm(die_within_30d ~ delta_mean_sensitivity + sofa_total + decade + female + diabetes + rend + cancer + cirrhosis + neutropenia + icu + anti_pyretics + pathogen + admit_temp_cat, data = routine_hours, family = "binomial")
 routine_model_results <- broom::tidy(routine_model, conf.int = TRUE, exponentiate = TRUE)
-write.csv(routine_model_results, file.path(project_tables, "sensitivity_routine_temps.csv"))
+readr::write_csv(routine_model_results, file.path(project_tables, "sensitivity_routine_temps.csv"))
 
-pdf(file.path(project_figures, "sensitivity_routine_temps.pdf"), height = 8, width = 8)
-broom::tidy(routine_model, conf.int = TRUE, exponentiate = TRUE) %>%
+sensitivity_routine_temps <- broom::tidy(routine_model, conf.int = TRUE, exponentiate = TRUE) %>%
   filter(!str_detect(term, "Intercept")) %>%
   mutate(term_label = variable_labels[as.character(term)]) %>%
   filter(!is.na(term_label)) %>%
@@ -1094,7 +1171,8 @@ broom::tidy(routine_model, conf.int = TRUE, exponentiate = TRUE) %>%
     axis.title.y = element_text(color = "black", size = 16),
     axis.text.x = element_text(color = "black", size = 12),
     axis.text.y = element_text(color = "black", size = 12))
-dev.off()
+ggsave(file.path(project_figures, "sensitivity_routine_temps.pdf"),
+       plot = sensitivity_routine_temps, width = 8, height = 8, units = "in", device = "pdf")
 ```
 
 ### 3. Day of Hospitalization - sensitivity analysis
@@ -1108,10 +1186,9 @@ results <- map_dfr(1:6, function(day_num) {
     slice_max(delta_mean, n = 1, with_ties = FALSE) %>%
     ungroup() %>%
     filter(num_measurements > 1) %>%
-    mutate(admit_temp_cat  = factor(admit_temp_cat, levels = c("normothermic", "hyperthermic", "hypothermic")),
-           age_group = as.numeric(age_group))
+    mutate(admit_temp_cat  = factor(admit_temp_cat, levels = c("normothermic", "hyperthermic", "hypothermic")))
   
-model <- glm(die_within_30d ~ delta_mean + sofa_total + age_group + female + diabetes + rend + cancer + cirrhosis + neutropenia + icu + anti_pyretics + pathogen + admit_temp_cat + num_measurements, 
+model <- glm(die_within_30d ~ delta_mean + sofa_total + decade + female + diabetes + rend + cancer + cirrhosis + neutropenia + icu + anti_pyretics + pathogen + admit_temp_cat + num_measurements, 
                data = temp_event_day, 
                family = "binomial")
   
@@ -1124,11 +1201,10 @@ hospitalization_day <- results %>%
   mutate(day_label = factor(
     paste0("Day ", day_24hr),
     levels = paste0("Day ", 6:1)))
-write.csv(hospitalization_day, file.path(project_tables, "sensitivity_hospitalization_day.csv"))
+readr::write_csv(hospitalization_day, file.path(project_tables, "sensitivity_hospitalization_day.csv"))
 
 # plot
-pdf(file.path(project_figures,"sensitivity_hospitalization_day.pdf"), height = 8, width = 8)
-results %>%
+sensitivity_hospitalization_day <- results %>%
   mutate(day_label = factor(
     paste0("Day ", day_24hr),
     levels = paste0("Day ", 6:1)
@@ -1152,7 +1228,8 @@ results %>%
     axis.title.y = element_text(color = "black", size = 12),
     axis.text.x = element_text(color = "black", size = 10),
     axis.text.y = element_text(color = "black", size = 10))
-dev.off()
+ggsave(file.path(project_figures, "sensitivity_hospitalization_day.pdf"),
+       plot = sensitivity_hospitalization_day, width = 8, height = 8, units = "in", device = "pdf")
 ```
 
 ### 4. Fever-free - sensitivity analysis
@@ -1164,17 +1241,15 @@ fever <- temp_event %>%
 no_fever_event <- temp_event %>%
   filter(!hospitalization_id %in% fever)
 
-patients <- length(unique(no_fever_event$patient_id))
-encounters <- length(no_fever_event$hospitalization_id)
-cat('\n In', site, 'CLIF data there are', patients, 'unique patients and', encounters, 'encounters \n without fever within the first 48 hours of hospitalization')
+consort_log <- consort_add(consort_log, no_fever_event, site,
+                           step = "No fever in first 48h (sensitivity cohort)")
 
-model_covariate <- glm(die_within_30d ~ delta_mean + sofa_total + age_group + female + diabetes + rend + cancer + cirrhosis + neutropenia + icu + anti_pyretics + pathogen + admit_temp_cat + num_measurements, data = no_fever_event, family = "binomial")
+model_covariate <- glm(die_within_30d ~ delta_mean + sofa_total + decade + female + diabetes + rend + cancer + cirrhosis + neutropenia + icu + anti_pyretics + pathogen + admit_temp_cat + num_measurements, data = no_fever_event, family = "binomial")
 sensitivity_fever <- broom::tidy(model_covariate, conf.int = TRUE, exponentiate = TRUE)
-write.csv(sensitivity_fever, file.path(project_tables, "sensitivity_fever.csv"))
+readr::write_csv(sensitivity_fever, file.path(project_tables, "sensitivity_fever.csv"))
 
 # plot
-pdf(file.path(project_figures,"sensitivity_fever.pdf"), height = 8, width = 8)
-broom::tidy(model_covariate, conf.int = TRUE, exponentiate = TRUE) %>%
+sensitivity_fever <- broom::tidy(model_covariate, conf.int = TRUE, exponentiate = TRUE) %>%
   filter(!str_detect(term, "Intercept")) %>%
   mutate(term_label = variable_labels[as.character(term)]) %>%
   filter(!is.na(term_label)) %>%
@@ -1196,14 +1271,15 @@ broom::tidy(model_covariate, conf.int = TRUE, exponentiate = TRUE) %>%
     axis.title.y = element_text(color = "black", size = 16),
     axis.text.x = element_text(color = "black", size = 12),
     axis.text.y = element_text(color = "black", size = 12))
-dev.off()
+ggsave(file.path(project_figures, "sensitivity_fever.pdf"),
+       plot = sensitivity_fever, width = 8, height = 8, units = "in", device = "pdf")
 ```
 
 ## B. Bacteremia
 
 ```{r bacteremia}
 # create a list of covariations
-bacter_covars <- c("sofa_total", "age_group", "female", "diabetes", "rend", "cancer", "cirrhosis", "neutropenia", "icu", "anti_pyretics", "num_measurements", "admit_temp_cat")
+bacter_covars <- c("sofa_total", "decade", "female", "diabetes", "rend", "cancer", "cirrhosis", "neutropenia", "icu", "anti_pyretics", "num_measurements", "admit_temp_cat")
 
 ## unadjusted analysis
 # function to fit and tidy logistic regression
@@ -1244,18 +1320,17 @@ adj_bacter_results <- adj_bacter_results %>%
   mutate(model = "Adjusted")
 all_bacter_results <- bind_rows(bacter_results, adj_bacter_results) %>%
   select(model, predictor, term, estimate, conf.low, conf.high, p.value)
-write.csv(all_bacter_results, file.path(project_tables, "bacteremia_logit_results.csv"))
+readr::write_csv(all_bacter_results, file.path(project_tables, "bacteremia_logit_results.csv"))
 
-bacter_model_covariate <- glm(pathogen ~ delta_mean + age_group + female + diabetes + rend + cancer + cirrhosis + neutropenia + icu + anti_pyretics + admit_temp_cat + num_measurements, data = temp_event, family = "binomial")
+bacter_model_covariate <- glm(pathogen ~ delta_mean + decade + female + diabetes + rend + cancer + cirrhosis + neutropenia + icu + anti_pyretics + admit_temp_cat + num_measurements, data = temp_event, family = "binomial")
 # get marginal effects
 bacter_model_margins <- margins(bacter_model_covariate)
 tidy_bacter_margins <- broom::tidy(bacter_model_margins, conf.int = TRUE) %>%
   filter(!str_detect(term, "Intercept"))
 tidy_bacter_margins
-write.csv(tidy_bacter_margins, file.path(project_tables, "bacteremia_margins.csv"))
+readr::write_csv(tidy_bacter_margins, file.path(project_tables, "bacteremia_margins.csv"))
 
-pdf(file.path(project_figures,"bacteremia_logit_results.pdf"), height = 8, width = 8)
-adj_bacter_results %>%
+bacteremia_logit_results <- adj_bacter_results %>%
   mutate(term_label = logit_labels[as.character(term)]) %>%
   filter(!is.na(term_label)) %>%
   mutate(term_label = forcats::fct_reorder(term_label, estimate)) %>%
@@ -1265,7 +1340,7 @@ adj_bacter_results %>%
   geom_hline(yintercept = 1, linetype = "dashed") +
   labs(
     x = NULL,
-    y = "Odds Ratio of 30-Day Mortality (95% CI)") +
+    y = "Odds Ratio of Bacteremia (95% CI)") +
   scale_y_continuous(limits = c(0.9, 3.0), breaks = seq(1, 3.0 , by = 0.5)) +
   coord_flip() +
   theme_minimal() +
@@ -1278,10 +1353,16 @@ adj_bacter_results %>%
     axis.title.y = element_text(color = "black", size = 16),
     axis.text.x = element_text(color = "black", size = 12),
     axis.text.y = element_text(color = "black", size = 12))
-dev.off()
+ggsave(file.path(project_figures, "bacteremia_logit_results.pdf"),
+       plot = bacteremia_logit_results, width = 8, height = 8, units = "in", device = "pdf")
 ```
+
+V. Export
 
 ```{r sink}
 # call sink() to return output to file specified earlier
 sink()
+
+readr::write_csv(consort_log, file.path(project_tables, "consort_flow_table.csv"))
+consort_log
 ```
