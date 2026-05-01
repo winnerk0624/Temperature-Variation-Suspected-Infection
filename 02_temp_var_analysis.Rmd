@@ -474,7 +474,7 @@ temperature_celsius <- clif_vitals %>%
          vital_name == "temp_c",
          # only keep values within normal physiologic range
          vital_value > 32 & vital_value < 44) %>%
-  select(patient_id, hospitalization_id, recorded_dttm, vital_value) %>%
+  select(hospitalization_id, recorded_dttm, vital_value) %>%
   collect() %>%
   mutate(vital_dttm = as.POSIXct(str_replace(recorded_dttm, "\\..*$", ""), 
                                      format = "%Y-%m-%d %H:%M:%S", tz = "UTC")) %>%
@@ -857,7 +857,7 @@ temp_trajectory <- ggplot(hourly_average_segs) +
     x = continuous_time, y = avg_temp,
     xend = next_x, yend = next_y, # create continuous line
     color = factor(day)),
-    size = 1) +
+    linewidth = 1) +
   scale_x_continuous(
     breaks = seq(0, 144, by = 12),
     labels = labels,
@@ -924,7 +924,7 @@ predictors <- list(
   "day1_fever" = "day1_fever",
   "day2_fever" = "day2_fever")
 # create a list of covariates
-adj_covars <- c("sofa_total", "decade", "female", "diabetes", "rend", "cancer", "cirrhosis", "neutropenia", "pathogen", "icu", "anti_pyretics", "num_measurements", "admit_temp_cat")
+adj_covars <- c("sofa_total", "decade", "female", "diabetes", "rend", "cancer", "cirrhosis", "neutropenia", "pathogen", "anti_pyretics", "num_measurements", "admit_temp_cat")
 
 ## unadjusted analysis
 # function to fit and tidy logistic regression
@@ -1007,7 +1007,7 @@ ggsave(file.path(project_figures, "mortality_logit_regults.pdf"),
 ### 1. Marginal Effects
 
 ```{r margins}
-model_covariate <- glm(die_within_30d ~ delta_mean + sofa_total + decade + female + diabetes + rend + cancer + cirrhosis + neutropenia + icu + anti_pyretics + pathogen + admit_temp_cat + num_measurements, data = temp_event, family = "binomial")
+model_covariate <- glm(die_within_30d ~ delta_mean + sofa_total + decade + female + diabetes + rend + cancer + cirrhosis + neutropenia + anti_pyretics + pathogen + admit_temp_cat + num_measurements, data = temp_event, family = "binomial")
 broom::tidy(model_covariate, conf.int = TRUE, exponentiate = TRUE)
 
 # get marginal effects
@@ -1107,9 +1107,6 @@ top_set <- candidate_hours %>%
 
 routine_hours <- unlist(top_set$hours)
 
-consort_log <- consort_add(consort_log, routine_hours, site,
-                           step = "Temperatures measured at routine hours")
-
 # plot
 # Base plot: Bar plot for number of temperature measurements
 routine_temps <- ggplot(abnormal_counts, aes(x = hour)) +
@@ -1135,7 +1132,6 @@ routine_temps <- ggplot(abnormal_counts, aes(x = hour)) +
 ggsave(file.path(project_figures, "routine_temps.pdf"),
        plot = routine_temps, width = 11, height = 8, units = "in", device = "pdf")
 
-# routine hours = 0, 4, 8, 12, 16, 20
 # restrict cohort for routine hours of measurement
 routine_hours <- variation_cohort %>%
   filter(hour %in% routine_hours) %>%
@@ -1145,7 +1141,10 @@ routine_hours <- variation_cohort %>%
   ungroup() %>%
   mutate(admit_temp_cat  = factor(admit_temp_cat, levels = c("normothermic", "hyperthermic", "hypothermic")))
 
-routine_model <- glm(die_within_30d ~ delta_mean_sensitivity + sofa_total + decade + female + diabetes + rend + cancer + cirrhosis + neutropenia + icu + anti_pyretics + pathogen + admit_temp_cat, data = routine_hours, family = "binomial")
+consort_log <- consort_add(consort_log, routine_hours, site,
+                           step = "Temperatures measured at routine hours")
+
+routine_model <- glm(die_within_30d ~ delta_mean_sensitivity + sofa_total + decade + female + diabetes + rend + cancer + cirrhosis + neutropenia + anti_pyretics + pathogen + admit_temp_cat, data = routine_hours, family = "binomial")
 routine_model_results <- broom::tidy(routine_model, conf.int = TRUE, exponentiate = TRUE)
 readr::write_csv(routine_model_results, file.path(project_tables, "sensitivity_routine_temps.csv"))
 
@@ -1188,7 +1187,7 @@ results <- map_dfr(1:6, function(day_num) {
     filter(num_measurements > 1) %>%
     mutate(admit_temp_cat  = factor(admit_temp_cat, levels = c("normothermic", "hyperthermic", "hypothermic")))
   
-model <- glm(die_within_30d ~ delta_mean + sofa_total + decade + female + diabetes + rend + cancer + cirrhosis + neutropenia + icu + anti_pyretics + pathogen + admit_temp_cat + num_measurements, 
+model <- glm(die_within_30d ~ delta_mean + sofa_total + decade + female + diabetes + rend + cancer + cirrhosis + neutropenia + anti_pyretics + pathogen + admit_temp_cat + num_measurements, 
                data = temp_event_day, 
                family = "binomial")
   
@@ -1216,7 +1215,7 @@ sensitivity_hospitalization_day <- results %>%
   labs(
     x = "24-Hour Day",
     y = "Odds Ratio of 30-Day Mortality (95% CI)") +
-  scale_y_continuous(limits = c(0.75, 2.3), breaks = seq(0.75, 2.25, by = 0.25)) +
+  scale_y_continuous(limits = c(0.75, 2.3), breaks = seq(0.70, 2.25, by = 0.25)) +
   coord_flip() +
   theme_minimal() +
   theme(
@@ -1244,7 +1243,7 @@ no_fever_event <- temp_event %>%
 consort_log <- consort_add(consort_log, no_fever_event, site,
                            step = "No fever in first 48h (sensitivity cohort)")
 
-model_covariate <- glm(die_within_30d ~ delta_mean + sofa_total + decade + female + diabetes + rend + cancer + cirrhosis + neutropenia + icu + anti_pyretics + pathogen + admit_temp_cat + num_measurements, data = no_fever_event, family = "binomial")
+model_covariate <- glm(die_within_30d ~ delta_mean + sofa_total + decade + female + diabetes + rend + cancer + cirrhosis + neutropenia + anti_pyretics + pathogen + admit_temp_cat + num_measurements, data = no_fever_event, family = "binomial")
 sensitivity_fever <- broom::tidy(model_covariate, conf.int = TRUE, exponentiate = TRUE)
 readr::write_csv(sensitivity_fever, file.path(project_tables, "sensitivity_fever.csv"))
 
@@ -1279,7 +1278,7 @@ ggsave(file.path(project_figures, "sensitivity_fever.pdf"),
 
 ```{r bacteremia}
 # create a list of covariations
-bacter_covars <- c("sofa_total", "decade", "female", "diabetes", "rend", "cancer", "cirrhosis", "neutropenia", "icu", "anti_pyretics", "num_measurements", "admit_temp_cat")
+bacter_covars <- c("sofa_total", "decade", "female", "diabetes", "rend", "cancer", "cirrhosis", "neutropenia", "anti_pyretics", "num_measurements", "admit_temp_cat")
 
 ## unadjusted analysis
 # function to fit and tidy logistic regression
@@ -1322,7 +1321,7 @@ all_bacter_results <- bind_rows(bacter_results, adj_bacter_results) %>%
   select(model, predictor, term, estimate, conf.low, conf.high, p.value)
 readr::write_csv(all_bacter_results, file.path(project_tables, "bacteremia_logit_results.csv"))
 
-bacter_model_covariate <- glm(pathogen ~ delta_mean + decade + female + diabetes + rend + cancer + cirrhosis + neutropenia + icu + anti_pyretics + admit_temp_cat + num_measurements, data = temp_event, family = "binomial")
+bacter_model_covariate <- glm(pathogen ~ delta_mean + decade + female + diabetes + rend + cancer + cirrhosis + neutropenia + anti_pyretics + admit_temp_cat + num_measurements, data = temp_event, family = "binomial")
 # get marginal effects
 bacter_model_margins <- margins(bacter_model_covariate)
 tidy_bacter_margins <- broom::tidy(bacter_model_margins, conf.int = TRUE) %>%
