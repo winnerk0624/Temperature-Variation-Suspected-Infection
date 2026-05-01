@@ -118,6 +118,14 @@ lat <- 42.2838    (45.4996 for OHSU)
 
 **Purpose:** Initialize the R environment
 
+This project uses `renv` to create a reproducible, per-project R package library. The exact pacakage versions used for analysis are recorded in `renv.lock`
+
+**Key Operations**
+1. **Clone the repository** from GitHub
+2. **Open `Temperature_Variation_Suspected_Infection.Rproj`** in RStudio
+3. **Run the environment setup script**: `00_renv_restore.R`
+   This will install `renv` if needed and restore all packages from `renv.lock`
+
 ### 01_calc_24hr_sofa_max.py — SOFA Score Calculation
 
 **Purpose:** Use clifpy to calculate maximum SOFA score within the first 24 hours
@@ -169,6 +177,7 @@ The secondary outcome is **culture-positive bacteremia** defined as a blood cult
 | `project_tables/sensitivity_fever.csv` | Sensitivity analysis with fever classification |
 | `project_tables/bacteremia_logit_results.csv` | Results from unadjusted and adjusted logistic regression models with culture-positive bacteremia |
 | `project_tables/bacteremia_margins.csv` | Results from marginal effects of multivariable logistic regression model with culture-positive bacteremia|
+| `consort_flow_table ` | Numbers after inclusion and exclusion criteria are applied; used for building the consort flow diagram
 
 **Output Figures:**
 
@@ -193,4 +202,4 @@ The secondary outcome is **culture-positive bacteremia** defined as a blood cult
 
 ## Files to Upload
 
-After successful completion, return the contents of `project_tables` and `project_figures`. This includes all analysis artifacts, flow diagram data, and summary tables.
+After successful completion, return the contents of `project_tables` and `project_figures`. This includes all analysis artifacts, flow diagram data, figures and summary tables.
