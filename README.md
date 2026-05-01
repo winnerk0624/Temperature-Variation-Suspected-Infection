@@ -14,9 +14,9 @@
 - [Data Directory](#data-directory)
 - [Configuration](#configuration)
 - [Pipeline Details](#pipeline-details)
+  - [00_renv_restore.R - Initialize R Environment](#00_renvrestoreR--initialize_R_environment)
   - [01_calc_24hr_sofa_max.py — SOFA Score Calculation](#01_calc24hrsofamaxpy--sofa-score-calculation)
-  - [02_calc_cci.py - Charlson Comorbidity Index Calculation](#02_calcccipy--charlson-comorbidity-index-calculation)
-  - [03_temp_var_analysis.Rmd - Cohort identification and analysis](#03_tempvaranalysisrmd--cohort-identification-and-analysis)
+  - [02_temp_var_analysis.Rmd - Cohort identification and analysis](#02_tempvaranalysisrmd--cohort-identification-and-analysis)
 - [Files to Upload](#files-to-upload)
 
 ---
