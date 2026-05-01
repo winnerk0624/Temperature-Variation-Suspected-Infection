@@ -786,7 +786,7 @@ readr::write_csv(tbl_ttl_df, file.path(project_tables, "table1_all.csv"))
 variation_cohort$hour <- as.integer(format(variation_cohort$vital_dttm, "%H"))
 summary_by_hour <- variation_cohort %>%
   filter(day_24hr %in% c(1:6),
-         hour %in% seq(0, 20, by = 4)) %>%
+         hour %in% seq(3, 23, by = 4)) %>%
   group_by(day_24hr, hour) %>%
   summarize(
     mean_temp = mean(temp, na.rm = T),
@@ -1108,7 +1108,7 @@ routine_temps <- ggplot(abnormal_counts, aes(x = hour)) +
   # Secondary y-axis for probability scale
   scale_y_continuous(
     labels = scales::percent,
-    limits = c(0, 0.125),
+    limits = c(0, 0.13),
     sec.axis = sec_axis(~ ., name = "Probability of Abnormal Temperature", labels = scales::percent),
     expand = c(0, 0)) +
   theme_minimal() +
@@ -1202,7 +1202,7 @@ sensitivity_hospitalization_day <- results %>%
   labs(
     x = "24-Hour Day",
     y = "Odds Ratio of 30-Day Mortality (95% CI)") +
-  scale_y_continuous(limits = c(0.75, 2.3), breaks = seq(0.70, 2.25, by = 0.25)) +
+  scale_y_continuous(limits = c(0.70, 2.3), breaks = seq(0.70, 2.25, by = 0.25)) +
   coord_flip() +
   theme_minimal() +
   theme(
@@ -1245,7 +1245,7 @@ sensitivity_fever <- broom::tidy(model_covariate, conf.int = TRUE, exponentiate 
   geom_point(color = "#D81B60", size = 2) +
   geom_hline(yintercept = 1, linetype = "dashed") +
   labs(x = NULL, y = "Odds Ratio of 30-day Mortality") +
-  scale_y_continuous(limits = c(0.0, 4), breaks = seq(0, 4, by = 0.5)) +
+  scale_y_continuous(limits = c(0.0, 4.3), breaks = seq(0, 4.25, by = 0.5)) +
   coord_flip() +
   theme_minimal(base_size = 14) +
   theme(
