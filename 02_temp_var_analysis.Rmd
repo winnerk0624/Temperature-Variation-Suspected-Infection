@@ -759,31 +759,18 @@ mean_cat_tab <- variation_unique %>%
 # variables to include
 vars <- c("delta_mean", "female", "age_at_admission", "sofa_total", "cci_score", "diabetes", "rend", "cirrhosis", "cancer", "neutropenia", "admit_temp_cat", "day1_fever", "day2_fever", "pathogen", "die_within_30d", "pseudomonas_aeruginosa", "enterococcus", "staphylococcus_aureus", "klebsiella_pneumoniae", "escherichia_coli")
 catvars <- c("female", "diabetes", "rend", "cirrhosis", "cancer", "die_within_30d", "neutropenia", "admit_temp_cat", "pathogen", "day1_fever", "day2_fever", "pseudomonas_aeruginosa", "enterococcus", "staphylococcus_aureus", "klebsiella_pneumoniae", "escherichia_coli")
-contvars <- setdiff(vars, catvars)
 
 # table stratified by mean_cat
 tbl <- CreateTableOne(vars = vars, data = mean_cat_tab, strata = "mean_cat", factorVars = catvars)
 tbl <- print(tbl, nonormal = NULL, pval = T, quote = F, noSpaces = T, pDigits = 3, printToggle = F)
 tbl_df <- as.data.frame(tbl)
 tbl_df <- tibble::rownames_to_column(tbl_df, var = "variable")
+
 # full cohort table
 tbl_ttl <- CreateTableOne(vars = vars, data = mean_cat_tab, factorVars = catvars)
 tbl_ttl <- print(tbl_ttl, nonormal = NULL, quote = F, noSpaces = T, printToggle = F)
 tbl_ttl_df <- as.data.frame(tbl_ttl)
 tbl_ttl_df <- tibble::rownames_to_column(tbl_ttl_df, var = "variable")
-
-# get rows that correspond to continuous variables for formatting
-cont_rows <- Reduce('|', lapply(contvars, function(v) startsWith(rownames(tbl_df), v)))
-# replace x (y)" cell text -> "x ± y" for continuous variables
-tbl_df[cont_rows, ] <- lapply(tbl_df[cont_rows, ], function(x) {
-  x <- as.character(x)
-  gsub("(-?\\d+(?:\\.\\d+)?) \\((\\d+(?:\\.\\d+)?)\\)", "\\1 ± \\2", x)
-})
-
-tbl_ttl_df[cont_rows, ] <- lapply(tbl_ttl_df[cont_rows, ], function(x) {
-  x <- as.character(x)
-  gsub("(-?\\d+(?:\\.\\d+)?) \\((\\d+(?:\\.\\d+)?)\\)", "\\1 ± \\2", x)
-})
 
 # write csv
 readr::write_csv(tbl_df, file.path(project_tables, "table1_cat.csv"))
