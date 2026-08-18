@@ -1308,7 +1308,7 @@ all_bacter_results <- bind_rows(bacter_results, adj_bacter_results) %>%
   select(model, predictor, term, estimate, conf.low, conf.high, p.value)
 readr::write_csv(all_bacter_results, file.path(project_tables, "bacteremia_logit_results.csv"))
 
-bacter_model_covariate <- glm(pathogen ~ delta_mean + decade + female + diabetes + rend + cancer + cirrhosis + neutropenia + anti_pyretics + admit_temp_cat + num_measurements, data = temp_event, family = "binomial")
+bacter_model_covariate <- glm(pathogen ~ delta_mean + sofa_total + decade + female + diabetes + rend + cancer + cirrhosis + neutropenia + anti_pyretics + admit_temp_cat + num_measurements, data = temp_event, family = "binomial")
 # get marginal effects
 bacter_model_margins <- margins(bacter_model_covariate)
 tidy_bacter_margins <- broom::tidy(bacter_model_margins, conf.int = TRUE) %>%
